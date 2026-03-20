@@ -1,0 +1,7 @@
+{
+  "threshold": 0.5,
+  "uncertainty_margin": 0.08,
+  "threshold_val_accuracy": 1.0,
+  "sample_rate": 16000,
+  "target_len": 48000
+}
