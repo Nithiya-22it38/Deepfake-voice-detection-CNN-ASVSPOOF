@@ -303,6 +303,12 @@ MODEL_FILES = [
     "deepfake_detector2.pth",
     "deepfake_detector_v2.pth",
     "deepfake_cnn_asvspoof_best.pth",
+    "deepfake_cnn_balanced.pth",
+    "deepfake_detector_fixed.pth",
+    "deepfake_detector_fixed1.pth",
+    "deepfake_detector_fixed_final2.pth",
+    "deepfake_detector_fixedno.pth",
+    
 ]
 
 # Sweep these RMS values to find the sweet spot
@@ -528,3 +534,4 @@ print("    TARGET_RMS  = {}".format(best_rms))
 print('    model.load_state_dict(torch.load("{}", map_location="cpu"))'.format(best_path))
 print("=" * 75)
 print()
+

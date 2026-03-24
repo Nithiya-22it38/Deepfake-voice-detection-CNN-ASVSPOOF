@@ -272,92 +272,41 @@
 # if __name__ == "__main__":
 #     app.run(host="0.0.0.0", port=5000, debug=True)
 
-################### live recording CA   #################3
+################### live recording CA working with more confidence#################3
+
+
+"""
+app.py — Deepfake Voice Detector Backend
+=========================================
+Fixes applied:
+  1. Live recordings: browser sends raw PCM float32 as JSON (no ffmpeg/pydub)
+  2. Uploaded files: pydub decode (already worked)
+  3. Spectrogram instance normalization: makes amplitude irrelevant to the model
+  4. Temperature scaling: honest confidence display
+"""
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
 import torch.nn as nn
 import torchaudio
+import torchaudio.transforms as T
 from pydub import AudioSegment
 import io
 
 app = Flask(__name__)
 CORS(app)
 
+# ── Constants ─────────────────────────────────────────────────────────────────
 MAX_LEN     = 64000
-transform   = torchaudio.transforms.MelSpectrogram(sample_rate=16000, n_mels=64)
-TEMPERATURE = 2.5
+SAMPLE_RATE = 16000
+TEMPERATURE = 2.5   # softens overconfident softmax outputs
 
-# RMS target only applied to LIVE recordings
-# Uploaded files are already at the right level so skip normalization for them
-TARGET_RMS  = 0.035
-
-
-def pad_or_truncate(waveform):
-    if waveform.size(1) > MAX_LEN:
-        return waveform[:, :MAX_LEN]
-    elif waveform.size(1) < MAX_LEN:
-        pad_len = MAX_LEN - waveform.size(1)
-        return torch.nn.functional.pad(waveform, (0, pad_len))
-    return waveform
+# ── Mel transform — identical to training script ──────────────────────────────
+mel_transform = T.MelSpectrogram(sample_rate=SAMPLE_RATE, n_mels=64)
 
 
-def decode_pydub(file_bytes):
-    """Decode any audio format to float32 waveform in [-1, 1] at 16kHz mono."""
-    audio = AudioSegment.from_file(io.BytesIO(file_bytes))
-    audio = audio.set_channels(1)
-    audio = audio.set_frame_rate(16000)
-    samples  = audio.get_array_of_samples()
-    waveform = torch.tensor(list(samples), dtype=torch.float32).unsqueeze(0)
-    sw = audio.sample_width
-    if sw == 2:
-        waveform = waveform / (2 ** 15)
-    elif sw == 4:
-        waveform = waveform / (2 ** 31)
-    else:
-        peak = torch.max(torch.abs(waveform))
-        if peak > 0:
-            waveform = waveform / peak
-    return waveform
-
-
-def normalize_rms(waveform, target_rms):
-    """Scale waveform so its RMS matches target_rms."""
-    rms = waveform.pow(2).mean().sqrt()
-    if rms > 1e-6:
-        waveform = waveform * (target_rms / rms)
-    return torch.clamp(waveform, -1.0, 1.0)
-
-
-def run_inference(waveform):
-    waveform = pad_or_truncate(waveform)
-    spec     = transform(waveform)
-    spec     = spec.unsqueeze(0)
-
-    print("spec -> min:{:.4f}  max:{:.4f}  mean:{:.4f}".format(
-        spec.min().item(), spec.max().item(), spec.mean().item()))
-
-    with torch.no_grad():
-        logits       = model(spec)
-        raw_probs    = torch.softmax(logits, dim=1)[0]
-        scaled_probs = torch.softmax(logits / TEMPERATURE, dim=1)[0]
-        pred_class   = int(torch.argmax(raw_probs).item())
-
-    label      = "Bonafide" if pred_class == 0 else "Spoof"
-    b_display  = round(float(scaled_probs[0].item()) * 100, 2)
-    s_display  = round(float(scaled_probs[1].item()) * 100, 2)
-    confidence = b_display if pred_class == 0 else s_display
-
-    print("raw    -> Bonafide:{:.1f}%  Spoof:{:.1f}%".format(
-        float(raw_probs[0].item()) * 100,
-        float(raw_probs[1].item()) * 100))
-    print("scaled -> Bonafide:{}%  Spoof:{}%  -> {}".format(
-        b_display, s_display, label))
-
-    return label, confidence, b_display, s_display
-
-
+# ── Model — must match training script exactly ────────────────────────────────
 class SpectrogramCNN(nn.Module):
     def __init__(self):
         super().__init__()
@@ -387,74 +336,183 @@ model.eval()
 print("Model loaded: deepfake_detector1.pth")
 
 
+# ── Preprocessing helpers ─────────────────────────────────────────────────────
+def pad_or_truncate(waveform):
+    n = waveform.size(1)
+    if n > MAX_LEN: return waveform[:, :MAX_LEN]
+    if n < MAX_LEN: return torch.nn.functional.pad(waveform, (0, MAX_LEN - n))
+    return waveform
+
+
+def instance_normalize_spectrogram(spec):
+    """
+    KEY FIX: Instance normalize the spectrogram.
+
+    WHY THIS WORKS:
+    The model was trained on ASVspoof files which are quiet (rms ~0.01).
+    Live mic audio is loud (rms ~0.15). This makes the raw mel spectrogram
+    values completely different, so the model predicts based on amplitude
+    instead of voice features.
+
+    Instance normalization removes the mean and scales by std per sample.
+    After this operation, every spectrogram — regardless of mic volume —
+    has mean=0 and std=1. The model now sees ONLY the spectral shape
+    (the actual voice features) and not the absolute amplitude level.
+
+    This is the standard fix used in production audio classification systems.
+    """
+    mean = spec.mean()
+    std  = spec.std()
+    if std > 1e-6:
+        spec = (spec - mean) / std
+    return spec
+
+
+def compute_spectrogram(waveform):
+    """Compute mel spectrogram with instance normalization."""
+    spec = mel_transform(waveform)         # [1, 64, T]
+    spec = torch.log(spec + 1e-6)          # log compression (same as log-mel)
+    spec = instance_normalize_spectrogram(spec)
+    return spec.unsqueeze(0)               # [1, 1, 64, T]
+
+
+def decode_uploaded_file(file_bytes):
+    """Decode uploaded audio file using pydub. Works for wav/mp3/flac/ogg."""
+    audio    = AudioSegment.from_file(io.BytesIO(file_bytes))
+    audio    = audio.set_channels(1).set_frame_rate(SAMPLE_RATE)
+    samples  = audio.get_array_of_samples()
+    waveform = torch.tensor(list(samples), dtype=torch.float32).unsqueeze(0)
+    sw = audio.sample_width
+    if sw == 2:   waveform = waveform / (2 ** 15)
+    elif sw == 4: waveform = waveform / (2 ** 31)
+    else:
+        peak = waveform.abs().max()
+        if peak > 0: waveform = waveform / peak
+    return waveform
+
+
+def run_inference(waveform, source=""):
+    """Run inference and return prediction with confidence."""
+    waveform = pad_or_truncate(waveform)
+    spec     = compute_spectrogram(waveform)
+
+    rms  = waveform.pow(2).mean().sqrt().item()
+    peak = waveform.abs().max().item()
+    print("[{}] rms:{:.5f}  peak:{:.5f}  spec_mean:{:.4f}  spec_std:{:.4f}".format(
+        source, rms, peak, spec.mean().item(), spec.std().item()))
+
+    with torch.no_grad():
+        logits       = model(spec)
+        raw_probs    = torch.softmax(logits, dim=1)[0]
+        scaled_probs = torch.softmax(logits / TEMPERATURE, dim=1)[0]
+        pred         = int(torch.argmax(raw_probs).item())
+
+    label  = "Bonafide" if pred == 0 else "Spoof"
+    b_raw  = float(raw_probs[0].item()) * 100
+    s_raw  = float(raw_probs[1].item()) * 100
+    b_disp = round(float(scaled_probs[0].item()) * 100, 2)
+    s_disp = round(float(scaled_probs[1].item()) * 100, 2)
+    conf   = b_disp if pred == 0 else s_disp
+
+    print("raw    B:{:.1f}%  S:{:.1f}%  -> {}".format(b_raw, s_raw, label))
+    print("scaled B:{}%  S:{}%".format(b_disp, s_disp))
+
+    return label, conf, b_disp, s_disp
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
 def home():
-    return "Deepfake CNN API is running. Use /predict or /predict-live."
+    return "Deepfake CNN API running."
 
 
-# ── Uploaded file endpoint (no RMS normalization — was working fine) ──────────
 @app.route("/predict", methods=["POST"])
 def predict():
+    """
+    Uploaded file endpoint.
+    Accepts multipart/form-data with a 'file' field.
+    Supports wav, mp3, flac, ogg, webm.
+    """
     try:
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file_bytes = request.files["file"].read()
-        waveform   = decode_pydub(file_bytes)
+        if len(file_bytes) < 500:
+            return jsonify({"error": "File too small"}), 400
 
-        rms = waveform.pow(2).mean().sqrt().item()
-        print("[UPLOAD] rms:{:.5f}  peak:{:.5f}  shape:{}".format(
-            rms, waveform.abs().max().item(), list(waveform.shape)))
+        waveform = decode_uploaded_file(file_bytes)
 
-        # No amplitude normalization for uploaded files
-        label, confidence, b_display, s_display = run_inference(waveform)
+        if waveform.abs().max().item() < 1e-6:
+            return jsonify({"error": "Audio file is silent"}), 400
 
-        return jsonify({
-            "prediction":    label,
-            "confidence":    confidence,
-            "bonafide_prob": b_display,
-            "spoof_prob":    s_display,
-        })
+        label, conf, b, s = run_inference(waveform, "UPLOAD")
+        return jsonify({"prediction": label, "confidence": conf,
+                        "bonafide_prob": b, "spoof_prob": s})
 
     except Exception as e:
-        print("ERROR: {}".format(e))
+        print("ERROR /predict: {}".format(e))
         return jsonify({"error": str(e)}), 400
 
 
-# ── Live recording endpoint (with RMS normalization) ──────────────────────────
 @app.route("/predict-live", methods=["POST"])
 def predict_live():
+    """
+    Live recording endpoint.
+    Accepts JSON: { "samples": [float, ...], "sampleRate": 16000 }
+
+    WHY JSON instead of a file:
+    Browser MediaRecorder produces webm/opus. On Windows, ffmpeg (used by pydub)
+    frequently produces all-zero PCM when decoding webm/opus due to missing
+    codec support. This is a known Windows ffmpeg issue.
+
+    The fix: the browser uses AudioContext.decodeAudioData() to decode its own
+    recording (always works — same engine that encoded it), converts to Float32Array,
+    and sends the raw PCM samples as JSON. The server receives plain numbers —
+    no file format, no codec, no ffmpeg involved.
+    """
     try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+        data = request.get_json(force=True)
 
-        file_bytes = request.files["file"].read()
-        waveform   = decode_pydub(file_bytes)
+        if not data or "samples" not in data:
+            return jsonify({"error": "No samples received. Send JSON with 'samples' array."}), 400
 
-        rms_before = waveform.pow(2).mean().sqrt().item()
-        print("[LIVE] before norm -> rms:{:.5f}  peak:{:.5f}  shape:{}".format(
-            rms_before, waveform.abs().max().item(), list(waveform.shape)))
+        samples     = data["samples"]
+        sample_rate = int(data.get("sampleRate", SAMPLE_RATE))
 
-        # Normalize amplitude to match training data loudness
-        waveform = normalize_rms(waveform, TARGET_RMS)
+        print("[LIVE] received {} samples at {}Hz".format(len(samples), sample_rate))
 
-        rms_after = waveform.pow(2).mean().sqrt().item()
-        print("[LIVE] after  norm -> rms:{:.5f}  peak:{:.5f}".format(
-            rms_after, waveform.abs().max().item()))
+        if len(samples) < 8000:
+            return jsonify({"error": "Recording too short (minimum 0.5 seconds)"}), 400
 
-        label, confidence, b_display, s_display = run_inference(waveform)
+        waveform = torch.tensor(samples, dtype=torch.float32).unsqueeze(0)
 
-        return jsonify({
-            "prediction":    label,
-            "confidence":    confidence,
-            "bonafide_prob": b_display,
-            "spoof_prob":    s_display,
-        })
+        if waveform.abs().max().item() < 1e-6:
+            return jsonify({
+                "error": (
+                    "Microphone is silent. "
+                    "Go to Windows Settings → Sound → Input, "
+                    "click Microphone Array, and unmute it."
+                )
+            }), 400
+
+        # Resample if browser sent at different rate
+        if sample_rate != SAMPLE_RATE:
+            resampler = torchaudio.transforms.Resample(
+                orig_freq=sample_rate, new_freq=SAMPLE_RATE)
+            waveform  = resampler(waveform)
+            print("[LIVE] resampled {} → {}Hz".format(sample_rate, SAMPLE_RATE))
+
+        label, conf, b, s = run_inference(waveform, "LIVE")
+        return jsonify({"prediction": label, "confidence": conf,
+                        "bonafide_prob": b, "spoof_prob": s})
 
     except Exception as e:
-        print("ERROR: {}".format(e))
+        print("ERROR /predict-live: {}".format(e))
         return jsonify({"error": str(e)}), 400
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
+
