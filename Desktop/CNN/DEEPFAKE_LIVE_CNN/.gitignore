@@ -1,9 +1,0 @@
-
-ffmpeg
-ffplay
-ffprobe
-*.wav
-*.mp3
-*.pth
-dataset/
-node_modules/

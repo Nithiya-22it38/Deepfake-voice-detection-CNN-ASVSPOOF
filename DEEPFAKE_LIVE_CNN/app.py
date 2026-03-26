@@ -274,7 +274,6 @@
 
 ################## live recording CA working with more confidence#################3
 
-
 """
 app.py — Deepfake Voice Detector Backend
 =========================================
@@ -514,5 +513,3 @@ def predict_live():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
-
