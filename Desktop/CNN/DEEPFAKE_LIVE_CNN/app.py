@@ -1,4 +1,4 @@
-################################claude AI soooo close results #################33333
+################################CAI soooo close results #################33333
 
 # from flask import Flask, request, jsonify
 # from flask_cors import CORS
@@ -124,7 +124,7 @@
 # if __name__ == "__main__":
 #     app.run(host="0.0.0.0", port=5000, debug=True)
 
-####################### CLOUDE some what close as not high confidence ##########33
+####################### CAI some what close as not high confidence ##########33
 # from flask import Flask, request, jsonify
 # from flask_cors import CORS
 # import torch
