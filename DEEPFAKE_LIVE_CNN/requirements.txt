@@ -8,3 +8,6 @@ flask
 flask-cors
 librosa
 numpy
+gdown
+pydubn
+gunicorn
