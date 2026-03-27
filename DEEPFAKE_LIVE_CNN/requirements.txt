@@ -9,5 +9,5 @@ flask-cors
 librosa
 numpy
 gdown
-pydubn
+pydub
 gunicorn
