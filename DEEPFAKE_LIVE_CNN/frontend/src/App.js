@@ -1613,32 +1613,32 @@
 /////////////////////////////////// CAI final ////////////////
 
 
-
 import React, { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Upload, FileAudio, X, ShieldCheck, ShieldAlert } from "lucide-react";
+import {
+  Mic,
+  Square,
+  Loader2,
+  Upload,
+  FileAudio,
+  X,
+  ShieldCheck,
+  ShieldAlert,
+} from "lucide-react";
 import "./App.css";
 
-const API_URL         = "http://127.0.0.1:5000";
+/* ✅ CHANGE THIS TO YOUR RENDER BACKEND URL */
+const API_URL = "https://deepfake-voice-detection-cnn-asvspoof.onrender.com/".replace(/\/$/, "");
+
 const MIN_RECORD_SECS = 3;
-const TARGET_SR       = 16000;
+const TARGET_SR = 16000;
 
 /**
  * Extract raw PCM float32 samples from a Blob using AudioContext.
- *
- * WHY THIS WORKS:
- * The browser MediaRecorder produces webm/opus blobs.
- * On Windows, pydub+ffmpeg frequently decodes these to all-zero PCM
- * due to missing opus codec support in some ffmpeg builds.
- *
- * AudioContext.decodeAudioData() uses the browser's own built-in
- * audio decoder — the same engine that produced the recording.
- * It ALWAYS works correctly. We then send the raw float32 samples
- * as JSON, bypassing any file format issues entirely.
  */
 async function extractPCMSamples(blob, targetSampleRate) {
   var arrayBuffer = await blob.arrayBuffer();
-  var audioCtx    = new AudioContext({ sampleRate: targetSampleRate });
+  var audioCtx = new AudioContext({ sampleRate: targetSampleRate });
 
   var decoded;
   try {
@@ -1649,7 +1649,7 @@ async function extractPCMSamples(blob, targetSampleRate) {
   }
   audioCtx.close();
 
-  // Take channel 0 (mono). AudioContext already resampled to targetSampleRate.
+  // Take channel 0 (mono)
   var rawSamples = decoded.getChannelData(0);
 
   // Find peak to detect silence
@@ -1660,36 +1660,41 @@ async function extractPCMSamples(blob, targetSampleRate) {
   }
 
   console.log(
-    "PCM extracted | samples=" + rawSamples.length +
-    " | sampleRate=" + decoded.sampleRate +
-    " | duration=" + (rawSamples.length / decoded.sampleRate).toFixed(2) + "s" +
-    " | peak=" + peak.toFixed(5)
+    "PCM extracted | samples=" +
+      rawSamples.length +
+      " | sampleRate=" +
+      decoded.sampleRate +
+      " | duration=" +
+      (rawSamples.length / decoded.sampleRate).toFixed(2) +
+      "s" +
+      " | peak=" +
+      peak.toFixed(5)
   );
 
   if (peak < 0.0001) {
     throw new Error(
-      "Microphone recorded silence (peak=" + peak.toFixed(6) + "). " +
-      "Please go to Windows Settings → Sound → Input and unmute your microphone."
+      "Microphone recorded silence (peak=" +
+        peak.toFixed(6) +
+        "). Please go to Windows Settings → Sound → Input and unmute your microphone."
     );
   }
 
-  // Convert Float32Array to plain JS Array for JSON serialization
   return {
-    samples:    Array.from(rawSamples),
+    samples: Array.from(rawSamples),
     sampleRate: decoded.sampleRate,
-    duration:   rawSamples.length / decoded.sampleRate,
-    peak:       peak,
+    duration: rawSamples.length / decoded.sampleRate,
+    peak: peak,
   };
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   var [isAnalyzing, setIsAnalyzing] = useState(false);
-  var [result,      setResult]      = useState(null);
-  var [mode,        setMode]        = useState(null);
-  var [errorMsg,    setErrorMsg]    = useState(null);
+  var [result, setResult] = useState(null);
+  var [mode, setMode] = useState(null);
+  var [errorMsg, setErrorMsg] = useState(null);
 
-  var handleAnalyze = useCallback(async function(blob, isLive) {
+  var handleAnalyze = useCallback(async function (blob, isLive) {
     setIsAnalyzing(true);
     setResult(null);
     setErrorMsg(null);
@@ -1698,28 +1703,26 @@ function App() {
       var response;
 
       if (isLive) {
-        // Extract raw PCM via AudioContext, send as JSON
         console.log("Extracting PCM samples from recording...");
         var pcm = await extractPCMSamples(blob, TARGET_SR);
 
         console.log("Sending " + pcm.samples.length + " samples to /predict-live");
 
         response = await fetch(API_URL + "/predict-live", {
-          method:  "POST",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({
-            samples:    pcm.samples,
+          body: JSON.stringify({
+            samples: pcm.samples,
             sampleRate: pcm.sampleRate,
           }),
         });
-
       } else {
-        // Send file directly to /predict
         var formData = new FormData();
         formData.append("file", blob, blob.name || "upload.wav");
+
         response = await fetch(API_URL + "/predict", {
           method: "POST",
-          body:   formData,
+          body: formData,
         });
       }
 
@@ -1729,12 +1732,15 @@ function App() {
         throw new Error(data.error || "Backend error");
       }
 
-      var raw      = (data.prediction || "").toLowerCase().trim();
-      var verdict  = raw === "bonafide" ? "real" : "fake";
+      var raw = (data.prediction || "").toLowerCase().trim();
+      var verdict = raw === "bonafide" ? "real" : "fake";
       var dispProb = verdict === "real" ? data.bonafide_prob : data.spoof_prob;
 
-      setResult({ verdict: verdict, confidence: Math.round(dispProb), displayProb: dispProb });
-
+      setResult({
+        verdict: verdict,
+        confidence: Math.round(dispProb),
+        displayProb: dispProb,
+      });
     } catch (e) {
       console.error("Analysis failed:", e);
       setErrorMsg(e && e.message ? e.message : "Analysis failed. Please try again.");
@@ -1743,14 +1749,20 @@ function App() {
     }
   }, []);
 
-  function switchMode(m) { setMode(m); setResult(null); setErrorMsg(null); }
+  function switchMode(m) {
+    setMode(m);
+    setResult(null);
+    setErrorMsg(null);
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="max-w-md w-full mx-auto px-4 py-12 space-y-8">
-
-        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
-          className="text-center space-y-3">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center space-y-3"
+        >
           <h1 className="text-3xl font-bold font-display tracking-tight text-foreground">
             Deepfake Voice Detector
           </h1>
@@ -1759,54 +1771,80 @@ function App() {
           </p>
         </motion.div>
 
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }} className="flex gap-3">
-          <button type="button"
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="flex gap-3">
+          <button
+            type="button"
             className={"btn " + (mode === "record" ? "btn-primary" : "btn-outline")}
-            onClick={function() { switchMode("record"); }}>
+            onClick={function () {
+              switchMode("record");
+            }}
+          >
             <Mic className="icon" /> Record Audio
           </button>
-          <button type="button"
+
+          <button
+            type="button"
             className={"btn " + (mode === "upload" ? "btn-primary" : "btn-outline")}
-            onClick={function() { switchMode("upload"); }}>
+            onClick={function () {
+              switchMode("upload");
+            }}
+          >
             <Upload className="icon" /> Upload Audio
           </button>
         </motion.div>
 
         <AnimatePresence mode="wait">
           {mode === "record" && (
-            <motion.div key="record" initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="card">
-              <AudioRecorder
-                onRecordingComplete={function(b) { handleAnalyze(b, true); }}
-                isAnalyzing={isAnalyzing} />
+            <motion.div
+              key="record"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="card"
+            >
+              <AudioRecorder onRecordingComplete={function (b) { handleAnalyze(b, true); }} isAnalyzing={isAnalyzing} />
             </motion.div>
           )}
+
           {mode === "upload" && (
-            <motion.div key="upload" initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="card">
-              <FileUploader
-                onFileSelect={function(f) { handleAnalyze(f, false); }}
-                isAnalyzing={isAnalyzing} />
+            <motion.div
+              key="upload"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="card"
+            >
+              <FileUploader onFileSelect={function (f) { handleAnalyze(f, false); }} isAnalyzing={isAnalyzing} />
             </motion.div>
           )}
         </AnimatePresence>
 
         <AnimatePresence mode="wait">
           {isAnalyzing && (
-            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }} className="loading">
-              <motion.div className="spinner" animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }} />
+            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="loading">
+              <motion.div
+                className="spinner"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              />
               <p className="text-sm text-muted-foreground font-mono">Analyzing audio...</p>
             </motion.div>
           )}
+
           {result && !isAnalyzing && (
-            <motion.div key="result"><ResultDisplay result={result} /></motion.div>
+            <motion.div key="result">
+              <ResultDisplay result={result} />
+            </motion.div>
           )}
+
           {errorMsg && !isAnalyzing && (
-            <motion.div key="error" initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="error-card">
+            <motion.div
+              key="error"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="error-card"
+            >
               {errorMsg}
             </motion.div>
           )}
@@ -1819,46 +1857,58 @@ function App() {
 // ── AudioRecorder ─────────────────────────────────────────────────────────────
 function AudioRecorder({ onRecordingComplete, isAnalyzing }) {
   var [isRecording, setIsRecording] = useState(false);
-  var [duration,    setDuration]    = useState(0);
-  var [tooShort,    setTooShort]    = useState(false);
-  var mediaRecorderRef = useRef(null);
-  var chunksRef        = useRef([]);
-  var timerRef         = useRef(null);
-  var durationRef      = useRef(0);
+  var [duration, setDuration] = useState(0);
+  var [tooShort, setTooShort] = useState(false);
 
-  var startRecording = useCallback(async function() {
+  var mediaRecorderRef = useRef(null);
+  var chunksRef = useRef([]);
+  var timerRef = useRef(null);
+  var durationRef = useRef(0);
+
+  var startRecording = useCallback(async function () {
     setTooShort(false);
     try {
       var stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          channelCount:     1,
-          sampleRate:       16000,
+          channelCount: 1,
+          sampleRate: 16000,
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl:  false,
-        }
+          autoGainControl: false,
+        },
       });
 
       var mimeType =
-        MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
-        MediaRecorder.isTypeSupported("audio/webm")             ? "audio/webm"             :
-        MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")  ? "audio/ogg;codecs=opus"  : "";
+        MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+          ? "audio/ogg;codecs=opus"
+          : "";
 
       var recorder = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : {});
       mediaRecorderRef.current = recorder;
-      chunksRef.current        = [];
+      chunksRef.current = [];
 
-      recorder.ondataavailable = function(e) {
+      recorder.ondataavailable = function (e) {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      recorder.onstop = function() {
+      recorder.onstop = function () {
         var mime = recorder.mimeType || "audio/webm";
         var blob = new Blob(chunksRef.current, { type: mime });
-        stream.getTracks().forEach(function(t) { t.stop(); });
-        console.log("Blob: " + blob.size + " bytes | " + mime +
-          " | chunks=" + chunksRef.current.length);
-        if (durationRef.current < MIN_RECORD_SECS) { setTooShort(true); return; }
+        stream.getTracks().forEach(function (t) {
+          t.stop();
+        });
+
+        console.log("Blob: " + blob.size + " bytes | " + mime + " | chunks=" + chunksRef.current.length);
+
+        if (durationRef.current < MIN_RECORD_SECS) {
+          setTooShort(true);
+          return;
+        }
+
         onRecordingComplete(blob);
       };
 
@@ -1866,17 +1916,22 @@ function AudioRecorder({ onRecordingComplete, isAnalyzing }) {
       setIsRecording(true);
       setDuration(0);
       durationRef.current = 0;
-      timerRef.current = setInterval(function() {
-        durationRef.current += 1;
-        setDuration(function(d) { return d + 1; });
-      }, 1000);
 
-    } catch (e) { console.error("Microphone error:", e); }
+      timerRef.current = setInterval(function () {
+        durationRef.current += 1;
+        setDuration(function (d) {
+          return d + 1;
+        });
+      }, 1000);
+    } catch (e) {
+      console.error("Microphone error:", e);
+    }
   }, [onRecordingComplete]);
 
-  var stopRecording = useCallback(function() {
+  var stopRecording = useCallback(function () {
     clearInterval(timerRef.current);
     setIsRecording(false);
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.requestData();
       mediaRecorderRef.current.stop();
@@ -1891,14 +1946,20 @@ function AudioRecorder({ onRecordingComplete, isAnalyzing }) {
     <div className="recorder">
       <AnimatePresence>
         {isRecording && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }} className="waveform">
-            {Array.from({ length: 20 }).map(function(_, i) {
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="waveform">
+            {Array.from({ length: 20 }).map(function (_, i) {
               return (
-                <motion.div key={i} className="wave-bar"
+                <motion.div
+                  key={i}
+                  className="wave-bar"
                   animate={{ height: [4, Math.random() * 32 + 8, 4] }}
-                  transition={{ duration: 0.6 + Math.random() * 0.4,
-                    repeat: Infinity, ease: "easeInOut", delay: i * 0.05 }} />
+                  transition={{
+                    duration: 0.6 + Math.random() * 0.4,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                    delay: i * 0.05,
+                  }}
+                />
               );
             })}
           </motion.div>
@@ -1906,38 +1967,37 @@ function AudioRecorder({ onRecordingComplete, isAnalyzing }) {
       </AnimatePresence>
 
       {isRecording && <span className="timer">{fmt(duration)}</span>}
+
       {!isRecording && !isAnalyzing && (
         <p className="helper" style={{ fontSize: "0.72rem", opacity: 0.55, marginBottom: 4 }}>
           Minimum {MIN_RECORD_SECS} seconds recommended
         </p>
       )}
+
       {tooShort && !isRecording && (
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="helper"
-          style={{ color: "var(--color-text-warning)", marginBottom: 4 }}>
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="helper" style={{ color: "var(--color-text-warning)", marginBottom: 4 }}>
           Too short — please record at least {MIN_RECORD_SECS} seconds
         </motion.p>
       )}
 
       <div className="record-btn-wrap">
         {isRecording && (
-          <motion.div className="record-ring"
-            animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }}
-            transition={{ duration: 1.5, repeat: Infinity }} />
+          <motion.div className="record-ring" animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }} transition={{ duration: 1.5, repeat: Infinity }} />
         )}
-        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-          onClick={isRecording ? stopRecording : startRecording} disabled={isAnalyzing}
-          className={"record-btn " + (isRecording ? "recording" : "idle") +
-            (isAnalyzing ? " disabled" : "")}>
-          {isAnalyzing ? <Loader2 className="icon-lg spin" />
-            : isRecording ? <Square className="icon-md" />
-            : <Mic className="icon-lg" />}
+
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isAnalyzing}
+          className={"record-btn " + (isRecording ? "recording" : "idle") + (isAnalyzing ? " disabled" : "")}
+        >
+          {isAnalyzing ? <Loader2 className="icon-lg spin" /> : isRecording ? <Square className="icon-md" /> : <Mic className="icon-lg" />}
         </motion.button>
       </div>
 
       <p className="helper">
-        {isAnalyzing ? "Analyzing audio..."
-          : isRecording ? "Recording — tap to stop"
-          : "Tap to start recording"}
+        {isAnalyzing ? "Analyzing audio..." : isRecording ? "Recording — tap to stop" : "Tap to start recording"}
       </p>
     </div>
   );
@@ -1945,15 +2005,20 @@ function AudioRecorder({ onRecordingComplete, isAnalyzing }) {
 
 // ── FileUploader ──────────────────────────────────────────────────────────────
 function FileUploader({ onFileSelect, isAnalyzing }) {
-  var inputRef                = useRef(null);
+  var inputRef = useRef(null);
   var [dragOver, setDragOver] = useState(false);
-  var [file, setFile]         = useState(null);
+  var [file, setFile] = useState(null);
 
   function handleFile(f) {
     if (!f || !f.type.startsWith("audio/")) return;
-    setFile(f); onFileSelect(f);
+    setFile(f);
+    onFileSelect(f);
   }
-  function clearFile() { setFile(null); if (inputRef.current) inputRef.current.value = ""; }
+
+  function clearFile() {
+    setFile(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }
 
   return (
     <div className="uploader">
@@ -1964,6 +2029,7 @@ function FileUploader({ onFileSelect, isAnalyzing }) {
             <p className="file-name">{file.name}</p>
             <p className="file-size">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
           </div>
+
           {!isAnalyzing && (
             <button type="button" onClick={clearFile} className="icon-btn">
               <X className="icon-sm" />
@@ -1971,12 +2037,25 @@ function FileUploader({ onFileSelect, isAnalyzing }) {
           )}
         </motion.div>
       ) : (
-        <motion.div whileHover={{ scale: 1.01 }}
-          onClick={function() { if (inputRef.current) inputRef.current.click(); }}
-          onDragOver={function(e) { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={function() { setDragOver(false); }}
-          onDrop={function(e) { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
-          className={"dropzone " + (dragOver ? "drag" : "")}>
+        <motion.div
+          whileHover={{ scale: 1.01 }}
+          onClick={function () {
+            if (inputRef.current) inputRef.current.click();
+          }}
+          onDragOver={function (e) {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={function () {
+            setDragOver(false);
+          }}
+          onDrop={function (e) {
+            e.preventDefault();
+            setDragOver(false);
+            handleFile(e.dataTransfer.files[0]);
+          }}
+          className={"dropzone " + (dragOver ? "drag" : "")}
+        >
           <Upload className="icon-lg muted" />
           <div className="text-center">
             <p className="drop-title">Drop audio file or click to upload</p>
@@ -1984,41 +2063,48 @@ function FileUploader({ onFileSelect, isAnalyzing }) {
           </div>
         </motion.div>
       )}
-      <input ref={inputRef} type="file" accept="audio/*" className="hidden"
-        onChange={function(e) { var f = e.target.files && e.target.files[0]; if (f) handleFile(f); }} />
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="audio/*"
+        className="hidden"
+        onChange={function (e) {
+          var f = e.target.files && e.target.files[0];
+          if (f) handleFile(f);
+        }}
+      />
     </div>
   );
 }
 
 // ── ResultDisplay ─────────────────────────────────────────────────────────────
 function ResultDisplay({ result }) {
-  var isReal    = result.verdict === "real";
-  var Icon      = isReal ? ShieldCheck : ShieldAlert;
-  var title     = isReal ? "Authentic Voice" : "Deepfake Detected";
+  var isReal = result.verdict === "real";
+  var Icon = isReal ? ShieldCheck : ShieldAlert;
+  var title = isReal ? "Authentic Voice" : "Deepfake Detected";
   var cardClass = isReal ? "real" : "fake";
   var fillClass = isReal ? "success" : "danger";
   var probLabel = isReal ? "Authentic" : "Spoof";
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }} className="result">
-      <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }}
-        className={"result-card " + cardClass}>
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="result">
+      <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className={"result-card " + cardClass}>
         <div className="result-head">
-          <motion.div initial={{ rotate: -180, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }}
-            transition={{ duration: 0.6, type: "spring" }}>
+          <motion.div initial={{ rotate: -180, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} transition={{ duration: 0.6, type: "spring" }}>
             <Icon className={"icon-xl " + fillClass} />
           </motion.div>
           <h3 className="result-title">{title}</h3>
         </div>
+
         <div className="result-body">
           <p className="result-label">Confidence</p>
           <span className="result-value">{result.confidence}%</span>
+
           <div className="meter">
-            <motion.div initial={{ width: 0 }} animate={{ width: result.confidence + "%" }}
-              transition={{ duration: 1, ease: "easeOut", delay: 0.3 }}
-              className={"meter-fill " + fillClass} />
+            <motion.div initial={{ width: 0 }} animate={{ width: result.confidence + "%" }} transition={{ duration: 1, ease: "easeOut", delay: 0.3 }} className={"meter-fill " + fillClass} />
           </div>
+
           <div className="prob-row">
             <span className={"prob-value " + fillClass}>{result.displayProb}%</span>
             <span className="prob-label">&nbsp;{probLabel}</span>
