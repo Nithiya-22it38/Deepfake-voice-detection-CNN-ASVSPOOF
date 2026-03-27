@@ -515,7 +515,6 @@
 #     app.run(host="0.0.0.0", port=5000, debug=True)
 
 
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
@@ -538,13 +537,14 @@ MODEL_FILE_ID = "1EfI2FDUqsZsSYH0G8r0WsWlCFkJfDr8h"
 MODEL_FILE = "deepfake_detector1.pth"
 MODEL_URL = f"https://drive.google.com/uc?id={MODEL_FILE_ID}"
 
-model = None  # Lazy loading
+model = None
 
-# ── Download Model ──
+# ── Download Model (ONLY ONCE) ──
 def download_model():
     if not os.path.exists(MODEL_FILE):
         print("Downloading model...")
         gdown.download(MODEL_URL, MODEL_FILE, quiet=False)
+        print("Download complete")
 
 # ── Model Architecture ──
 class SpectrogramCNN(nn.Module):
@@ -570,16 +570,13 @@ class SpectrogramCNN(nn.Module):
         return self.fc2(x)
 
 # ── Load Model ──
-def get_model():
+def load_model():
     global model
-    if model is None:
-        download_model()
-        print("Loading model...")
-        model = SpectrogramCNN()
-        model.load_state_dict(torch.load(MODEL_FILE, map_location="cpu"))
-        model.eval()
-        print("Model loaded successfully")
-    return model
+    print("Loading model...")
+    model = SpectrogramCNN()
+    model.load_state_dict(torch.load(MODEL_FILE, map_location="cpu"))
+    model.eval()
+    print("Model loaded successfully")
 
 # ── Audio Processing ──
 mel_transform = T.MelSpectrogram(sample_rate=SAMPLE_RATE, n_mels=64)
@@ -598,7 +595,7 @@ def compute_spectrogram(waveform):
     spec = normalize(spec)
     return spec.unsqueeze(0)
 
-# ── SAFE AUDIO DECODING (NO FFMPEG) ──
+# ── Decode WAV only (NO FFMPEG) ──
 def decode_audio(file_bytes):
     temp_file = "temp.wav"
     with open(temp_file, "wb") as f:
@@ -611,6 +608,12 @@ def decode_audio(file_bytes):
         waveform = resampler(waveform)
 
     return waveform
+
+# ── STARTUP (IMPORTANT FIX) ──
+print("Starting server...")
+download_model()
+load_model()
+print("Model ready for inference")
 
 # ── Routes ──
 @app.route("/")
@@ -635,8 +638,6 @@ def predict():
 
         waveform = pad_or_truncate(waveform)
         spec = compute_spectrogram(waveform)
-
-        model = get_model()
 
         with torch.no_grad():
             logits = model(spec)
